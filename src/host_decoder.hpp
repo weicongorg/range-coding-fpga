@@ -22,7 +22,7 @@ struct HostDecoder {
   uint GetFreq(uint totFreq) {
     auto t1 = 1.0f / totFreq;
     uint t2 = *(uint *)&t1;
-    range = RangeCoder<0>::ShiftDivide(range, 1.0f / totFreq);
+    range = ShiftDivide(range, *(uint *)&t1);
     return code / range;
   }
 

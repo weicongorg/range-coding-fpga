@@ -109,4 +109,28 @@ using FrequncePipes =
     PipeArray<class FreqPP, FlagBundle<SymbolFrequence>, 128, 22>;
 
 
+uint ExtractMantissa(uint fakeval) {
+  constexpr uint kManBits = 24;
+  uint tail = fakeval << 9;
+  int expo = (fakeval >> 23) - 127 + 1;
+  int tailLen = kManBits + expo - 1;
+  uint res = 1;
+  res <<= tailLen;
+  res |= (tail >> (32 - tailLen));
+  res <<= (31 - kManBits);
+  return res;
+}
+
+uint ShiftDivide(uint a, uint b) {
+  // return a*b;
+  uint B = ExtractMantissa(b);
+  uint res = 0;
+#pragma unroll
+  for (int i = 0; i < 32; ++i) {
+    bool abit = (a >> (31 - i)) & 0x1;
+    res += abit * (B >> i);
+  }
+  return res;
+}
+
 #endif  // RANGE_CODING_H_

@@ -1,11 +1,9 @@
 #ifndef RANGE_DECODING_HPP
 #define RANGE_DECODING_HPP
 #include <vector>
+
 #include "range_coding.h"
 #include "range_encoder.hpp"
-#include "store.hpp"
-#include "test_utils.h"
-
 
 using UintRCVecx2 = ac_int<kRangeOutSize * 8 * 2, false>;
 using UintRCVec = ac_int<kRangeOutSize * 8, false>;
@@ -15,10 +13,10 @@ struct RCInputStream {
   uchar size;
 };
 
-constexpr uint kStep = 8;
-constexpr uint kMaxTotalFreq = (1 << 16) - 32;
+constexpr uint kStep = SimpleModel<0>::kStep;
+constexpr uint kMaxTotalFreq = SimpleModel<0>::kBound;
 
-void updateRange(uint &range, uint &code, RCInputStream &input_stream) {
+void UpdateRange(uint &range, uint &code, RCInputStream &input_stream) {
   bool range_bits[32];
 #pragma unroll
   for (char j = 0; j < 32; j++) {
@@ -73,7 +71,7 @@ using RCDataInPipe = ext::intel::pipe<class RCInnP, UintRCVec, 235>;
 using RCInitPipe = ext::intel::pipe<class RCIP, uint2, 235>;
 using FreqInPipe = ext::intel::pipe<class FreqStatP, FreqStat, 235>;
 
-template < uint kNSymbol>
+template <uint kNSymbol>
 struct FreqUpdater {
   void operator()(uint sym_count) const {
     uint totalFreq = kNSymbol;
@@ -92,32 +90,9 @@ struct FreqUpdater {
     }
   }
 };
-constexpr uint MULTIPLY_SHIFT_BITS = 24;
 
-uint shift_base_uint(uint fakeval) {
-  uint tail = fakeval << 9;
-  int expo = (fakeval >> 23) - 127 + 1;
-  int tailLen = MULTIPLY_SHIFT_BITS + expo - 1;
-  uint res = 1;
-  res <<= tailLen;
-  res |= (tail >> (32 - tailLen));
-  res <<= (31 - MULTIPLY_SHIFT_BITS);
-  return res;
-}
 
-uint shift_divide_uint(uint a, uint b) {
-  // return a*b;
-  uint B = shift_base_uint(b);
-  uint res = 0;
-#pragma unroll
-  for (int i = 0; i < 32; ++i) {
-    bool abit = (a >> (31 - i)) & 0x1;
-    res += abit * (B >> i);
-  }
-  return res;
-}
-
-uint shift_multiply(uint a, ushort b) {
+uint ShiftMultiply(uint a, ushort b) {
   ac_int<33, false> a33 = a;
   uint sum = 0;
 #pragma unroll
@@ -129,7 +104,7 @@ uint shift_multiply(uint a, ushort b) {
   return sum;
 }
 
-template < uint kNSymbol>
+template <uint kNSymbol>
 struct RangeDecoderKernel {
   void operator()() const {
     [[intel::fpga_register]] ushort freqs[kNSymbol];
@@ -147,7 +122,7 @@ struct RangeDecoderKernel {
 
     for (uint s = 0; s < num_symbol; ++s) {
       auto fs = FreqInPipe::read();
-      uint range_unit = shift_divide_uint(range, fs.totalFreq);
+      uint range_unit = ShiftDivide(range, fs.totalFreq);
 
       auto initial_code = code;
       uchar symbol = 0;
@@ -156,10 +131,8 @@ struct RangeDecoderKernel {
       ushort acc_freq = 0;
 #pragma unroll
       for (uint i = 0; i < kNSymbol; ++i) {
-        // uint cmuc = shift_multiply(range_unit, acc_freq + freqs[i]);
-        // uint acc_range = shift_multiply(range_unit, acc_freq);
-        uint cmuc = range_unit * (acc_freq + freqs[i]);
-        uint acc_range = range_unit * acc_freq;
+        uint cmuc = ShiftMultiply(range_unit, acc_freq + freqs[i]);
+        uint acc_range = ShiftMultiply(range_unit, acc_freq);
         acc_freq += freqs[i];
 
         bool is_symbol = cmuc > initial_code && no_symbol_appeared;
@@ -167,7 +140,7 @@ struct RangeDecoderKernel {
 
         if (is_symbol) {
           symbol = i;
-          range = shift_multiply(range_unit, freqs[i]);
+          range = ShiftMultiply(range_unit, freqs[i]);
           code = initial_code - acc_range;
         }
       }
@@ -182,7 +155,7 @@ struct RangeDecoderKernel {
         }
       }
 
-      updateRange(range, code, input_stream);
+      UpdateRange(range, code, input_stream);
 
       if (input_stream.size <= kRangeOutSize) {
         UintRCVecx2 in = RCDataInPipe::read();
@@ -194,6 +167,5 @@ struct RangeDecoderKernel {
     }
   }
 };
-
 
 #endif  // RANGE_DECODING_HPP

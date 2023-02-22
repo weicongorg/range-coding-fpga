@@ -1,39 +1,15 @@
 #ifndef RANGE_CODER_HPP_
 #define RANGE_CODER_HPP_
-#include "unrolled_loop.hpp"
-#include "range_coding.h"
 #include <CL/sycl.hpp>
+
+#include "range_coding.h"
+#include "unrolled_loop.hpp"
 using namespace sycl;
 
 template <uint kNCoders>
 struct RangeCoder {
-  static uint ExtractMantissa(float value) {
-    uint fakeval = *(uint *)&value;
-    // IEEE 754
-    constexpr uint kNMantissaBits = 24;
-    uint tail = fakeval << 9;
-    int expo = (fakeval >> 23) - 127 + 1;
-    int tail_len = kNMantissaBits + expo - 1;
-    uint res = 1;
-    res <<= tail_len;
-    res |= (tail >> (32 - tail_len));
-    res <<= (31 - kNMantissaBits);
-    return res;
-  }
 
-  static uint ShiftDivide(uint a, float b) {
-    // return a*b;
-    uint B = ExtractMantissa(b);
-    uint res = 0;
-#pragma unroll
-    for (int i = 0; i < 32; ++i) {
-      bool abit = (a >> (31 - i)) & 0x1;
-      res += abit * (B >> i);
-    }
-    return res;
-  }
-
-  static uint UpdateRange(uint freq, uint range, float total_freq_reciprocal) {
+  static uint UpdateRange(uint freq, uint range, uint total_freq_reciprocal) {
     // return freq*range*total_freq_reciprocal;
     uint B = ExtractMantissa(total_freq_reciprocal);
     uint res = 0;
@@ -76,14 +52,15 @@ struct RangeCoder {
         }
         if (read_success && !done) {
           float reciprocal = 1.0f / sf.total_freq;
-          uint temp = ShiftDivide(range[i], reciprocal) * sf.cumulative_freq;
+          uint fake_val = *(uint *)&reciprocal;
+          uint temp = ShiftDivide(range[i], fake_val) * sf.cumulative_freq;
           ulong low_LS32b = low[i] & 0xffffffff;
           ulong low_MS32b = low[i] >> 32;
           if (low_MS32b == 0xffffffff && low_LS32b + temp > 0xffffffff) {
             carry_locations[i] = range_sizes[i];
           }
           low[i] += temp;
-          range[i] = UpdateRange(sf.freq, range[i], reciprocal);
+          range[i] = UpdateRange(sf.freq, range[i], fake_val);
         }
       });
       fpga_tools::UnrolledLoop<0, kNCoders>(
