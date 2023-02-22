@@ -91,7 +91,6 @@ struct FreqUpdater {
   }
 };
 
-
 uint ShiftMultiply(uint a, ushort b) {
   ac_int<33, false> a33 = a;
   uint sum = 0;
@@ -128,12 +127,16 @@ struct RangeDecoderKernel {
       uchar symbol = 0;
       bool no_symbol_appeared = true;
 
-      ushort acc_freq = 0;
+      ushort acc_freq[kNSymbol + 1] = {0};
+#pragma unroll
+      for (uint i = 1; i <= kNSymbol; ++i) {
+        acc_freq[i] = acc_freq[i - 1] + freqs[i - 1];
+      }
+
 #pragma unroll
       for (uint i = 0; i < kNSymbol; ++i) {
-        uint cmuc = ShiftMultiply(range_unit, acc_freq + freqs[i]);
-        uint acc_range = ShiftMultiply(range_unit, acc_freq);
-        acc_freq += freqs[i];
+        uint cmuc = ShiftMultiply(range_unit, acc_freq[i + 1]);
+        uint acc_range = ShiftMultiply(range_unit, acc_freq[i]);
 
         bool is_symbol = cmuc > initial_code && no_symbol_appeared;
         no_symbol_appeared = cmuc <= initial_code;
@@ -143,14 +146,10 @@ struct RangeDecoderKernel {
           range = ShiftMultiply(range_unit, freqs[i]);
           code = initial_code - acc_range;
         }
-      }
-
-#pragma unroll
-      for (int i = 0; i < kNSymbol; ++i) {
         if (fs.needNorm) {
           freqs[i] = (freqs[i] >> 1) | 1;
         }
-        if (symbol == i) {
+        if (is_symbol) {
           freqs[i] += kStep;
         }
       }

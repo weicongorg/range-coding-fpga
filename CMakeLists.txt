@@ -69,7 +69,7 @@ endmacro()
 
 macro(add_report RPT_NAME)
     add_executable(${RPT_NAME} EXCLUDE_FROM_ALL ${ARGN}) 
-    set_target_properties(${RPT_NAME} PROPERTIES COMPILE_FLAGS ${HARDWARE_COMPILE_FLAGS})
+    set_target_properties(${RPT_NAME} PROPERTIES COMPILE_FLAGS "-DFPGA_REPORT ${HARDWARE_COMPILE_FLAGS}")
     set_target_properties(${RPT_NAME} PROPERTIES LINK_FLAGS "-fsycl-link ${HARDWARE_LINK_FLAGS}")
 endmacro()
 

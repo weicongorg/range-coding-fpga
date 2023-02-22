@@ -9,7 +9,13 @@
 #include "test_utils.h"
 
 using SymbPipe = ext::intel::pipe<class SxxxqP, FlagBundle<uchar>, 256>;
+
+#ifdef FPGA_REPORT
+constexpr uint kNSymbols = 32;
+#else
 constexpr uint kNSymbols = 256;
+#endif
+
 
 int main(int argc, char** argv) {
   auto q = CreateQueue();
@@ -65,7 +71,7 @@ int main(int argc, char** argv) {
     printf("truth: {%.*s}\n", file_size, (char*)fq_host_buffer.get());
     printf("decode: {%.*s}\n", file_size, (char*)decoded.data());
   } else {
-    printf("host decode successufully\n");
+    printf("host decode successfully\n");
   }
 
   printf("-----------kernel deocoding\n");
@@ -116,6 +122,6 @@ int main(int argc, char** argv) {
     // printf("truth: {%.*s}\n", file_size, (char*)fq_host_buffer.get());
     // printf("decode: {%.*s}\n", file_size, (char*)dec_ptr);
   } else {
-    printf("kernel decode successufully\n");
+    printf("kernel decode successfully\n");
   }
 }
