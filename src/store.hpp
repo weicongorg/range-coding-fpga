@@ -116,7 +116,7 @@ struct DoubleBufferingStore {
       auto acc_list = CreateArray<kNCoders>(
           [&](size_t idx) { return rc_buffer[id][idx].get_access(h); });
       auto size_acc = rc_size_buffer[id].get_access(h);
-      h.single_task([=]() [[intel::kernel_args_restrict]] {
+      h.single_task<class StoreRC>([=]() [[intel::kernel_args_restrict]] {
         Store<kNCoders>(acc_list, size_acc);
       });
     });
@@ -124,7 +124,7 @@ struct DoubleBufferingStore {
       auto acc_list = CreateArray<kNCoders>(
           [&](size_t idx) { return carry_buffer[id][idx].get_access(h); });
       auto size_acc = carry_size_buffer[id].get_access(h);
-      h.single_task([=]() [[intel::kernel_args_restrict]] {
+      h.single_task<class StoreCarrys>([=]() [[intel::kernel_args_restrict]] {
         StoreCarry<kNCoders>(acc_list, size_acc);
       });
     });

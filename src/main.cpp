@@ -3,8 +3,8 @@
 #include <vector>
 
 #include "host_decoder.hpp"
-#include "range_encoder.hpp"
 #include "range_decoder.hpp"
+#include "range_encoder.hpp"
 #include "store.hpp"
 #include "test_utils.h"
 
@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
 
   // launch------------------
 
-  q.single_task(
+  q.single_task<class Model>(
       SimpleModelKernel<SymbPipe, FrequncePipes::PipeAt<0>, kNSymbols>{});
   q.single_task(RangeCoder<1>{});
   DoubleBufferingStore<1> store(file_size);
@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
 
   q.submit([&](handler& h) {
     auto acc = fq_buffer.get_access<access::mode::read>(h);
-    h.single_task([=] {
+    h.single_task<class ReadSymbols>([=] {
       for (uint i = 0; i < acc.get_size(); ++i) {
         SymbPipe::write({acc[i], i == acc.get_size() - 1});
       }
@@ -71,13 +71,13 @@ int main(int argc, char** argv) {
   printf("-----------kernel deocoding\n");
 
   FreqUpdater<kNSymbols> fu;
-  q.single_task([=] { fu(file_size); });
+  q.single_task<decltype(fu)>([=] { fu(file_size); });
   q.single_task(RangeDecoderKernel<kNSymbols>());
 
   q.submit([&](handler& h) {
     auto rc_ptr = store.rc_buffer[0][0].get_access(h);
     auto rc_size = store.rc_size_buffer[0].get_host_access()[0];
-    h.single_task([=]() {
+    h.single_task<class ReadRC>([=]() {
       auto code_data = rc_ptr[1];
       uint code_init = 0;
       uchar* p = (uchar*)&code_data;
@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
   buffer<uchar, 1> sym_buffer = {range<1>(file_size)};
   q.submit([&](handler& h) {
      auto sym_ptr = sym_buffer.get_access(h);
-     h.single_task([=]() {
+     h.single_task<class StoreDecoded>([=]() {
        for (uint i = 0; i < file_size; ++i) {
          sym_ptr[i] = SymbolOutPipe::read();
          if (i % 12800 == 0) {
