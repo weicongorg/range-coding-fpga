@@ -1,5 +1,6 @@
 
 
+#include <chrono>
 #include <vector>
 
 #include "host_decoder.hpp"
@@ -16,13 +17,12 @@ constexpr uint kNSymbols = 32;
 constexpr uint kNSymbols = 256;
 #endif
 
-
 int main(int argc, char** argv) {
   auto q = CreateQueue();
 
   struct stat fstat;
   stat(argv[1], &fstat);
-  auto file_size = fstat.st_size;
+  uint file_size = fstat.st_size;
   if (file_size > 3L * 1024 * 1024 * 1024) {
     throw std::runtime_error("file too large");
   }
@@ -42,7 +42,6 @@ int main(int argc, char** argv) {
 
   q.single_task<class Model>(
       SimpleModelKernel<SymbPipe, FrequncePipes::PipeAt<0>, kNSymbols>{});
-  q.single_task(RangeCoder<1>{});
   DoubleBufferingStore<1> store(file_size);
   store.Launch(q, 0);
 
@@ -54,11 +53,21 @@ int main(int argc, char** argv) {
       }
     });
   });
+  auto e_encoding = q.single_task(RangeCoder<1>{});
+
   store.ApplyCarry(0, 0);
 
-  printf("-----------host deocoding\n");
+  auto start_enc =
+      e_encoding.get_profiling_info<info::event_profiling::command_start>() *
+      1.0 / 1e9;
+  auto end_enc =
+      e_encoding.get_profiling_info<info::event_profiling::command_end>() *
+      1.0 / 1e9;
+  auto thpt_enc = file_size * 1.0 / (end_enc - start_enc);
 
-  auto rc_ptr = store.rc_buffer[0][0].get_host_access().get_pointer();
+  printf("encoding thpt: %.4f M/s\n", thpt_enc / 1024 / 1024);
+
+  printf("-----------host deocoding\n");
 
   HostDecoder decoder(store.rc_buffer[0][0].get_host_access().get_pointer());
   SIMPLE_MODEL<kNSymbols> model;
@@ -78,7 +87,6 @@ int main(int argc, char** argv) {
 
   FreqUpdater<kNSymbols> fu;
   q.single_task<decltype(fu)>([=] { fu(file_size); });
-  q.single_task(RangeDecoderKernel<kNSymbols>());
 
   q.submit([&](handler& h) {
     auto rc_ptr = store.rc_buffer[0][0].get_access(h);
@@ -102,16 +110,28 @@ int main(int argc, char** argv) {
 
   buffer<uchar, 1> sym_buffer = {range<1>(file_size)};
   q.submit([&](handler& h) {
-     auto sym_ptr = sym_buffer.get_access(h);
-     h.single_task<class StoreDecoded>([=]() {
-       for (uint i = 0; i < file_size; ++i) {
-         sym_ptr[i] = SymbolOutPipe::read();
-         if (i % 12800 == 0) {
-           KERNEL_PRINTF("decoding %u\n", i);
-         }
-       }
-     });
-   }).wait();
+    auto sym_ptr = sym_buffer.get_access(h);
+    h.single_task<class StoreDecoded>([=]() {
+      for (uint i = 0; i < file_size; ++i) {
+        sym_ptr[i] = SymbolOutPipe::read();
+        if (i % 12800 == 0) {
+          KERNEL_PRINTF("decoding %u\n", i);
+        }
+      }
+    });
+  });
+
+  auto e_decoding = q.single_task(RangeDecoderKernel<kNSymbols>());
+  auto start =
+      e_decoding.get_profiling_info<info::event_profiling::command_start>() *
+      1.0 / 1e9;
+  auto end =
+      e_decoding.get_profiling_info<info::event_profiling::command_end>() *
+      1.0 / 1e9;
+  auto thpt = file_size * 1.0 / (end - start);
+
+  printf("decoding elapsed: %.4f s\n", end - start);
+  printf("decoding thpt: %.4f M/s\n", thpt / 1024 / 1024);
 
   auto dec_ptr = sym_buffer.get_host_access().get_pointer();
   if (memcmp(dec_ptr, fq_host_buffer.get(), file_size - 1) != 0) {
@@ -119,8 +139,6 @@ int main(int argc, char** argv) {
     std::ofstream dec_dump(std::string(argv[1]) + ".decode-dump");
     dec_dump.write((char*)dec_ptr, file_size - 1);
     dec_dump.close();
-    // printf("truth: {%.*s}\n", file_size, (char*)fq_host_buffer.get());
-    // printf("decode: {%.*s}\n", file_size, (char*)dec_ptr);
   } else {
     printf("kernel decode successfully\n");
   }
