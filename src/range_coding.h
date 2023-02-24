@@ -108,6 +108,22 @@ using RangeCarryPipe =
 using FrequncePipes =
     PipeArray<class FreqPP, FlagBundle<SymbolFrequence>, 128, 22>;
 
+struct FreqStat {
+  uint totalFreq;
+  bool needNorm;
+};
+using UintRCVecx2 = ac_int<kRangeOutSize * 8 * 2, false>;
+using UintRCVec = ac_int<kRangeOutSize * 8, false>;
+
+struct RCInputStream {
+  UintRCVecx2 bits;
+  uchar size;
+};
+
+using SymbolOutPipe = ext::intel::pipe<class SYmOP, uchar, 4>;
+using RCDataInPipe = ext::intel::pipe<class RCInnP, UintRCVec, 8>;
+using RCInitPipe = ext::intel::pipe<class RCIP, uint2, 1>;
+using FreqInPipe = ext::intel::pipe<class FreqStatP, FreqStat, 8>;
 
 uint ExtractMantissa(uint fakeval) {
   constexpr uint kManBits = 24;

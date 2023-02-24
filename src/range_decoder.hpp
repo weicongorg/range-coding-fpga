@@ -5,13 +5,6 @@
 #include "range_coding.h"
 #include "range_encoder.hpp"
 
-using UintRCVecx2 = ac_int<kRangeOutSize * 8 * 2, false>;
-using UintRCVec = ac_int<kRangeOutSize * 8, false>;
-
-struct RCInputStream {
-  UintRCVecx2 bits;
-  uchar size;
-};
 
 constexpr uint kStep = SimpleModel<0>::kStep;
 constexpr uint kMaxTotalFreq = SimpleModel<0>::kBound;
@@ -61,15 +54,6 @@ void UpdateRange(uint &range, uint &code, RCInputStream &input_stream) {
   }
 }
 
-struct FreqStat {
-  uint totalFreq;
-  bool needNorm;
-};
-
-using SymbolOutPipe = ext::intel::pipe<class SYmOP, uchar, 235>;
-using RCDataInPipe = ext::intel::pipe<class RCInnP, UintRCVec, 235>;
-using RCInitPipe = ext::intel::pipe<class RCIP, uint2, 235>;
-using FreqInPipe = ext::intel::pipe<class FreqStatP, FreqStat, 235>;
 
 template <uint kNSymbol>
 struct FreqUpdater {
