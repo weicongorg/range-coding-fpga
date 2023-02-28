@@ -122,7 +122,7 @@ struct RCInputStream {
 
 using SymbolOutPipe = ext::intel::pipe<class SYmOP, uchar, 4>;
 using RCDataInPipe = ext::intel::pipe<class RCInnP, UintRCVec, 8>;
-using RCInitPipe = ext::intel::pipe<class RCIP, uint2, 1>;
+using RCInitPipe = ext::intel::pipe<class RCIP, uint3, 1>;
 using FreqInPipe = ext::intel::pipe<class FreqStatP, FreqStat, 8>;
 
 uint ExtractMantissa(uint fakeval) {

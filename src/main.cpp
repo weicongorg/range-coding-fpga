@@ -93,14 +93,15 @@ int main(int argc, char** argv) {
     auto rc_size = store.rc_size_buffer[0].get_host_access()[0];
     h.single_task<class ReadRC>([=]() {
       auto code_data = rc_ptr[1];
+      auto stream_init = rc_ptr[2];
       uint code_init = 0;
       uchar* p = (uchar*)&code_data;
 #pragma unroll
       for (uint i = 0; i < 4; ++i) {
         code_init = code_init << 8 | p[i];
       }
-      RCInitPipe::write({file_size, code_init});
-      for (uint i = 2; i < CountVecs<kRangeOutSize>(rc_size) + 2; ++i) {
+      RCInitPipe::write({file_size, code_init, stream_init});
+      for (uint i = 3; i < CountVecs<kRangeOutSize>(rc_size) + 2; ++i) {
         UintRCVecx2 v = 0;
         v |= rc_ptr[i];
         RCDataInPipe::write(v);
@@ -115,7 +116,7 @@ int main(int argc, char** argv) {
       for (uint i = 0; i < file_size; ++i) {
         sym_ptr[i] = SymbolOutPipe::read();
         if (i % 12800 == 0) {
-          KERNEL_PRINTF("decoding %u\n", i);
+          KERNEL_PRINTF("decoding %u: %c\n", i, char(sym_ptr[i]));
         }
       }
     });

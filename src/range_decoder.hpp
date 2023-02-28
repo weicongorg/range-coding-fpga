@@ -5,7 +5,6 @@
 #include "range_coding.h"
 #include "range_encoder.hpp"
 
-
 constexpr uint kStep = SimpleModel<0>::kStep;
 constexpr uint kMaxTotalFreq = SimpleModel<0>::kBound;
 
@@ -54,7 +53,6 @@ void UpdateRange(uint &range, uint &code, RCInputStream &input_stream) {
   }
 }
 
-
 template <uint kNSymbol>
 struct FreqUpdater {
   void operator()(uint sym_count) const {
@@ -96,12 +94,10 @@ struct RangeDecoderKernel {
       freqs[i] = 1;
     }
     uint range = (uint)-1;
-    uint2 init = RCInitPipe::read();
+    uint3 init = RCInitPipe::read();
     uint num_symbol = init[0];
     uint code = init[1];
-    RCInputStream input_stream;
-    input_stream.bits = RCDataInPipe::read();
-    input_stream.size = kRangeOutSize;
+    RCInputStream input_stream{init[2], kRangeOutSize};
 
     for (uint s = 0; s < num_symbol; ++s) {
       auto fs = FreqInPipe::read();
