@@ -1,93 +1,18 @@
 #ifndef RANGE_CODING_H_
 #define RANGE_CODING_H_
 #include <CL/sycl.hpp>
-#include <type_traits>
 #include <array>
-
 #include <sycl/ext/intel/fpga_extensions.hpp>
+#include <type_traits>
+
 #include "onchip_memory_with_cache.hpp"
-#include "shifting_array.hpp"
 #include "pipe_array.hpp"
+#include "shifting_array.hpp"
 
 using namespace sycl;
 using std::array;
 
-
-struct SymbolFrequence {
-  ushort freq;
-  ushort cumulative_freq;
-  uint total_freq;
-};
-
-template <uint kNSymbol, typename TFreq = ushort>
-struct SimpleModel {
-  static constexpr uint kStep = std::is_same<ushort, TFreq>::value ? 8 : 1;
-  static constexpr uint kBound =
-      std::is_same<ushort, TFreq>::value ? (1 << 16) - 32 : (1 << 8) - 2;
-
-  uint total_freq;
-  ShiftingArray<TFreq, kNSymbol> freqs;
-
-  void Init() {
-    total_freq = kNSymbol;
-#pragma unroll
-    for (uint i = 0; i < kNSymbol; i++) {
-      freqs[i] = 1;
-    }
-  }
-
-  SymbolFrequence Update(uchar symbol) {
-    auto sf = ExtractFreq(symbol);
-    UpdateFreqs(symbol);
-    return sf;
-  }
-
-  SymbolFrequence ExtractFreq(uchar symbol) {
-    SymbolFrequence sf{0, 0, total_freq};
-#pragma unroll
-    for (uint j = 0; j < kNSymbol; ++j) {
-      sf.cumulative_freq += freqs[j] * (j < symbol);
-      if (symbol == j) {
-        sf.freq = freqs[j];
-      }
-    }
-    return sf;
-  }
-
-  void UpdateFreqs(uchar symbol) {
-    bool need_norm = total_freq >= kBound;
-#pragma unroll
-    for (uint i = 0; i < kNSymbol; ++i) {
-      if (need_norm) {
-        freqs[i] = (freqs[i] >> 1) | 1;
-      }
-      if (symbol == i) {
-        freqs[i] += kStep;
-      }
-    }
-    if (need_norm) {
-      total_freq = ((total_freq + kStep * 2 + kNSymbol * 2) >> 1);
-    } else {
-      total_freq = total_freq + kStep;
-    }
-  }
-};
-
-template <typename InPipe, typename FreqOutPipe, uint kNSymbol>
-struct SimpleModelKernel {
-  void operator()() const {
-    bool done = false;
-    SimpleModel<kNSymbol> model;
-    model.Init();
-    while (!done) {
-      auto in = InPipe::read();
-      done = in.done;
-      auto f = model.Update(in.data);
-      FreqOutPipe::write({f, done});
-    }
-  }
-};
-
+static constexpr uint kTotalFreq = 4096;
 constexpr uint kRangeOutSize = 4;
 struct RangeOutput {
   using IdxType = ac_int<Log2(kRangeOutSize) + 1, false>;
@@ -95,23 +20,6 @@ struct RangeOutput {
   ShiftingArray<uchar, kRangeOutSize> buffer;
 };
 
-
-template <uint num_coder>
-using RangePipe =
-    ext::intel::pipe<class ROutP, FlagBundle<array<RangeOutput, num_coder>>,
-                     128>;
-
-template <uint num_coder>
-using RangeCarryPipe =
-    ext::intel::pipe<class ROutP, FlagBundle<array<uint, num_coder>>, 128>;
-
-using FrequncePipes =
-    PipeArray<class FreqPP, FlagBundle<SymbolFrequence>, 128, 22>;
-
-struct FreqStat {
-  uint totalFreq;
-  bool needNorm;
-};
 using UintRCVecx2 = ac_int<kRangeOutSize * 8 * 2, false>;
 using UintRCVec = ac_int<kRangeOutSize * 8, false>;
 
@@ -120,10 +28,25 @@ struct RCInputStream {
   uchar size;
 };
 
+using SymInPipe = PipeArray<class FreqPP, FlagBundle<uchar>, 1, 22>;
+template <uint kNSymbol>
+using FreqPipe =
+    ext::intel::pipe<class FPP, ShiftingArray<ushort, kNSymbol>, 1>;
+template <uint num_coder>
+using RangePipe =
+    ext::intel::pipe<class ROutP, FlagBundle<array<RangeOutput, num_coder>>,
+                     4>;
+template <uint num_coder>
+using RangeCarryPipe =
+    ext::intel::pipe<class ROutP, FlagBundle<array<uint, num_coder>>, 4>;
+
 using SymbolOutPipe = ext::intel::pipe<class SYmOP, uchar, 4>;
 using RCDataInPipe = ext::intel::pipe<class RCInnP, UintRCVec, 8>;
 using RCInitPipe = ext::intel::pipe<class RCIP, uint3, 1>;
-using FreqInPipe = ext::intel::pipe<class FreqStatP, FreqStat, 8>;
+template <uint kNSymbol>
+using DecodingFreqPipe =
+    ext::intel::pipe<class FRDPP, ShiftingArray<ushort, kNSymbol>, 1>;
+
 
 uint ExtractMantissa(uint fakeval) {
   constexpr uint kManBits = 24;
@@ -148,5 +71,57 @@ uint ShiftDivide(uint a, uint b) {
   }
   return res;
 }
+
+uint ShiftMultiply(uint a, ushort b) {
+  uint sum = 0;
+#pragma unroll
+  for (int i = 0; i < 16; i++) {
+    if ((b >> i) & 1) {
+      sum += (a << i) & 0xffffffff;
+    }
+  }
+  return sum;
+}
+
+void UpdateRange(uint &range, uint &code, RCInputStream &input_stream) {
+  ac_int<32, false> range_bits(range);
+
+  bool b_large_24bits = range_bits[24] | range_bits[25] | range_bits[26] |
+                        range_bits[27] | range_bits[28] | range_bits[29] |
+                        range_bits[30] | range_bits[31];
+  bool b_large_16bits = range_bits[16] | range_bits[17] | range_bits[18] |
+                        range_bits[19] | range_bits[20] | range_bits[21] |
+                        range_bits[22] | range_bits[23];
+  bool b_large_8bits = range_bits[8] | range_bits[9] | range_bits[10] |
+                       range_bits[11] | range_bits[12] | range_bits[13] |
+                       range_bits[14] | range_bits[15];
+
+  bool b3 = !(b_large_24bits | b_large_16bits | b_large_8bits);
+  bool b2 = !(b_large_24bits | b_large_16bits);
+  bool b1 = !(b_large_24bits);
+
+  uchar *bits_ptr = (uchar *)&input_stream.bits;
+  if (b3) {
+    range <<= 24;
+    code = (code << 8) | bits_ptr[0];
+    code = (code << 8) | bits_ptr[1];
+    code = (code << 8) | bits_ptr[2];
+    input_stream.bits >>= 24;
+    input_stream.size -= 3;
+  } else if (b2) {
+    range <<= 16;
+    code = (code << 8) | bits_ptr[0];
+    code = (code << 8) | bits_ptr[1];
+    input_stream.bits >>= 16;
+    input_stream.size -= 2;
+  } else if (b1) {
+    range <<= 8;
+    code = (code << 8) | bits_ptr[0];
+    input_stream.bits >>= 8;
+    input_stream.size -= 1;
+  }
+}
+
+uint Multiply(uint a, ushort b) { return a * b; }
 
 #endif  // RANGE_CODING_H_

@@ -94,12 +94,12 @@ struct DoubleBufferingStore {
 
   DoubleBufferingStore(size_t fq_size)
       : rc_buffer{
-        BufferList<RangeVector::AcIntType>(fq_size/kRangeOutSize),
-        BufferList<RangeVector::AcIntType>(fq_size/kRangeOutSize),
+        BufferList<RangeVector::AcIntType>(fq_size*2),
+        BufferList<RangeVector::AcIntType>(fq_size*2),
       },
       carry_buffer{
-        BufferList<uint>(fq_size/10),
-        BufferList<uint>(fq_size/10),
+        BufferList<uint>(fq_size),
+        BufferList<uint>(fq_size),
       },
       rc_size_buffer{
         buffer<uint,1>{range<1>(kNCoders),buffer_props},

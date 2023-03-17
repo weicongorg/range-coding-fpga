@@ -6,9 +6,8 @@
 #include "unrolled_loop.hpp"
 using namespace sycl;
 
-template <uint kNCoders>
+template <uint kNCoders, uint kNSymbol>
 struct RangeCoder {
-
   static uint UpdateRange(uint freq, uint range, uint total_freq_reciprocal) {
     // return freq*range*total_freq_reciprocal;
     uint B = ExtractMantissa(total_freq_reciprocal);
@@ -35,6 +34,8 @@ struct RangeCoder {
       low[i] = 0;
       range[i] = (uint)-1;
     }
+    [[intel::fpga_register]] auto freqs = FreqPipe<kNSymbol>::read();
+    [[intel::fpga_register]] auto cumulated_freq = FreqPipe<kNSymbol>::read();
 
     // extend 2 loops for sending low out after all done
     bool do_ouput_low[2] = {false, false};
@@ -46,21 +47,25 @@ struct RangeCoder {
       fpga_tools::UnrolledLoop<0, kNCoders>([&](auto i) {
         carry_locations[i] = 0xffffffff;
         bool read_success = false;
-        auto [sf, done] = FrequncePipes::read<i>(read_success);
+        auto [symbol, done] = SymInPipe::read<i>(read_success);
         if (read_success) {
           can_continue[i] = !done;
         }
         if (read_success && !done) {
-          float reciprocal = 1.0f / sf.total_freq;
-          uint fake_val = *(uint *)&reciprocal;
-          uint temp = ShiftDivide(range[i], fake_val) * sf.cumulative_freq;
+          auto freq_shift = freqs;
+          freq_shift.AcInt() >>= symbol * 16;
+          auto acc_shift = cumulated_freq;
+          acc_shift.AcInt() >>= symbol * 16;
+
+          uint range_unit = range[i] / kTotalFreq;
+          auto temp = ShiftMultiply(range_unit, acc_shift[0]);
           ulong low_LS32b = low[i] & 0xffffffff;
           ulong low_MS32b = low[i] >> 32;
           if (low_MS32b == 0xffffffff && low_LS32b + temp > 0xffffffff) {
             carry_locations[i] = range_sizes[i];
           }
           low[i] += temp;
-          range[i] = UpdateRange(sf.freq, range[i], fake_val);
+          range[i] = ShiftMultiply(range_unit, freq_shift[0]);
         }
       });
       fpga_tools::UnrolledLoop<0, kNCoders>(
